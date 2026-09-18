@@ -168,7 +168,7 @@ def main(args):
         eval_stats = evaluate_generation_distributed(
             model_fn, eval_sampler, tuple(config.misc.latent_size), sample_model_kwargs,
             use_guidance, rae, ds_info.dataset, len(ds_info.dataset),
-            rank=rank, world_size=world_size, device=device,
+            rank=rank, world_size=world_size, device=device, model=model,
             batch_size=micro_batch_size, experiment_dir=experiment_name,
             global_step=global_step, autocast_kwargs=autocast_kwargs,
             reference_npz_path=ds_info.reference_npz,

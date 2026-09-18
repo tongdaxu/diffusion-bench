@@ -78,6 +78,7 @@ def evaluate_generation_distributed(
     experiment_dir: str,
     global_step: int,
     autocast_kwargs: dict,
+    model,
     metric_batch_size: int = 128,
     reference_npz_path: Optional[str] = None,
     shared_tmpdir: Optional[str] = None,
@@ -164,7 +165,9 @@ def evaluate_generation_distributed(
                 samples = sample_fn(z, model_fn, **model_kwargs)[-1]
                 if use_guidance:
                     samples = samples.chunk(2, dim=0)[0]
+                samples = model.denormalize_latents(samples)
                 samples = rae.decode(samples).clamp(0, 1)
+                print("SAMPLE RANGE", torch.min(samples), torch.max(samples))
             gen_np = samples.mul(255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
 
             # Compute distributed metrics during generation

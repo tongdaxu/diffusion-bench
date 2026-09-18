@@ -22,7 +22,7 @@ from data import prepare_unified_dataloader
 from encoders.vision_encoder import load_encoders
 from eval.datasets import normalize_eval_datasets, prepare_eval_datasets
 from stage1 import RAE
-from stage2.engine import train_one_epoch
+from stage2.engine import train_one_epoch_joint
 from stage2.models import Stage2ModelProtocol
 from stage2.transport import create_sampler, create_transport
 from stage2.utils import setup_text_encoder, validate_stage2_config
@@ -34,6 +34,7 @@ from utils.optim_utils import build_optimizer, build_scheduler
 from utils.resume_utils import configure_experiment_dirs, find_resume_checkpoint, save_worktree
 from utils.sync_utils import sync_checkpoint_blocking, sync_evals_blocking
 from utils.train_utils import center_crop_arr, get_autocast_kwargs
+from ifid.loss.losses import ReconstructionLoss_Simple
 
 
 def parse_args() -> argparse.Namespace:
@@ -114,7 +115,9 @@ def main():
 
     # stage1: rae - frozen
     rae: RAE = instantiate_from_config(config.stage_1).to(device)
-    rae.eval()
+    ddp_rae = DDP(rae, device_ids=[device.index], broadcast_buffers=False, find_unused_parameters=True)
+    rae = ddp_rae.module
+    ddp_rae.train()
 
     # repa target encoder
     repa_target_encoder = None
@@ -158,12 +161,33 @@ def main():
         PerceptualLoss(config.perceptual_loss.encoders, config.perceptual_loss.percep_loss_weights, device=device)
         if config.perceptual_loss.encoders else None
     )
+    loss_cfg = {
+        "discriminator_start": 0,
+        "discriminator_factor": 0.0,
+        "discriminator_weight": 0.0,
+        "quantizer_weight": 1.0,
+        "perceptual_loss": "lpips",
+        "perceptual_weight": 0.5,
+        "reconstruction_loss": "l1",
+        "reconstruction_weight": 1.0,
+        "lecam_regularization_weight": 0.0,
+        "kl_weight": 2e-7,
+        "logvar_init": 0.0,
+    }
+    vae_loss_fn = ReconstructionLoss_Simple(
+        loss_cfg
+    ).to(device)
 
     #########################################################
     # Optimizer + Scheduler setup
     #########################################################
     optimizer, optim_msg = build_optimizer(
         [p for p in model.parameters() if p.requires_grad],
+        config.training.optimizer,
+    )
+
+    optimizer_rae, optim_msg = build_optimizer(
+        [p for p in rae.parameters() if p.requires_grad],
         config.training.optimizer,
     )
 
@@ -174,10 +198,11 @@ def main():
     logger.info(f"Using {steps_per_epoch} steps per epoch (virtual={config.training.virtual_epoch_steps is not None})")
 
     # Build scheduler (needs steps_per_epoch)
-    scheduler = None
+    scheduler, scheduler_rae = None, None
     sched_msg = None
     if config.training.scheduler is not None:
         scheduler, sched_msg = build_scheduler(optimizer, steps_per_epoch, config.training.scheduler)
+        scheduler_rae, _ = build_scheduler(optimizer_rae, steps_per_epoch, config.training.scheduler)
 
     #########################################################
     # Transport + Sampler setup
@@ -249,16 +274,20 @@ def main():
     for epoch in range(start_epoch, config.training.epochs):
         model.train()
 
-        global_step = train_one_epoch(
+        global_step = train_one_epoch_joint(
             ddp_model=ddp_model,
             ema_model=ema_model,
+            ddp_rae=ddp_rae,
             rae=rae,
             percep_loss=percep_loss,
+            vae_loss_fn=vae_loss_fn,
             transport=transport,
             eval_sampler=eval_sampler,
             dataloader=dataloader,
             optimizer=optimizer,
             scheduler=scheduler,
+            optimizer_rae=optimizer_rae,
+            scheduler_rae=scheduler_rae,
             autocast_kwargs=autocast_kwargs,
             device=device,
             epoch=epoch,

@@ -104,7 +104,7 @@ def get_fixed_viz_batch_conditions(viz_fixed, y, condition_type, text_encoder, d
 def sample_and_decode(
     zs, context, attn_mask,
     eval_sampler, model_fn, sample_model_kwargs, rae,
-    use_guidance, condition_type, text_encoder, num_classes, device, autocast_kwargs,
+    use_guidance, condition_type, text_encoder, num_classes, device, autocast_kwargs, model,
     cls_t=None,
 ):
     """Generate and decode samples, handling guidance doubling."""
@@ -130,4 +130,5 @@ def sample_and_decode(
         samples = eval_sampler(zs, model_fn, **kwargs)[-1]
         if use_guidance:
             samples = samples.chunk(2, dim=0)[0]
+    samples = model.denormalize_latents(samples)
     return rae.decode(samples).cpu().float()

@@ -62,6 +62,8 @@ class DDTFinalLayer(nn.Module):
             return self.linear(x[:, 1:, :]), cls_pred
         return self.linear(x)
 
+def denorm_fun(latents, latents_scale, latents_bias):
+    return latents / (latents_scale + 1e-5) + latents_bias
 
 class DiTwDDTHead(nn.Module):
     def __init__(
@@ -125,7 +127,27 @@ class DiTwDDTHead(nn.Module):
             self.cls_in_proj_dec = nn.Linear(z_dim, dec_hidden_size)
             self.cls_in_norm_dec = RMSNorm(dec_hidden_size)
 
+        self.bn = nn.SyncBatchNorm(in_channels)
         self.initialize_weights()
+
+    def normalize_latents(self, z):
+        return self.bn(z)
+
+    def denormalize_latents(self, z):
+        latent_stats = dict(
+            latents_scale=self.bn.running_var.rsqrt(),
+            latents_bias=self.bn.running_mean,
+        )
+        latents_scale = latent_stats["latents_scale"].view(
+            1, self.in_channels, 1, 1
+        )
+        latents_bias = latent_stats["latents_bias"].view(
+            1, self.in_channels, 1, 1
+        )
+        # print("EVAL STATS", latent_stats)
+        z = denorm_fun(z, latents_scale, latents_bias)
+        return z
+
 
     def initialize_weights(self):
         # Patch embedders

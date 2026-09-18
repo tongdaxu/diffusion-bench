@@ -60,6 +60,11 @@ def update_ema(ema_model, model, decay=0.9999):
     model_params = OrderedDict(model.named_parameters())
     for name, param in model_params.items():
         ema_params[name].mul_(decay).add_(param.data, alpha=1 - decay)
+    # Copy buffers directly
+    ema_buffers = OrderedDict(ema_model.named_buffers())
+    model_buffers = OrderedDict(model.named_buffers())
+    for name, buffer in model_buffers.items():
+        ema_buffers[name].copy_(buffer)
 
 
 def get_autocast_kwargs(args) -> dict:

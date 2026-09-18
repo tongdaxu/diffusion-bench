@@ -42,7 +42,7 @@ class Transport:
     #######################################################
     #               Forward Pass and Loss                 #
     #######################################################
-    def training_losses(self, model, x1, model_kwargs={}, model_kwargs_null={}, z_clean=None, repa_coeff=None, base_model_coeff=1.0, percep_loss=None, cfg_dropout_prob=0.1, ema_model=None, cls_clean=None, reg_coeff=None):
+    def training_losses(self, ddp_model, x1, model_kwargs={}, model_kwargs_null={}, z_clean=None, repa_coeff=None, base_model_coeff=1.0, percep_loss=None, rae=None, model=None, images=None,cfg_dropout_prob=0.1, ema_model=None, cls_clean=None, reg_coeff=None, vae=None):
         model_kwargs, _ = apply_cfg_dropout(model_kwargs, model_kwargs_null, cfg_dropout_prob)
 
         t, x0, x1 = self.sample(x1)
@@ -60,9 +60,9 @@ class Transport:
 
         zt_pred = None
         if enable_repa:
-            model_output, zt_pred = model(xt, t, return_intermediate=True, **model_kwargs)
+            model_output, zt_pred = ddp_model(xt, t, return_intermediate=True, **model_kwargs)
         else:
-            model_output = model(xt, t, **model_kwargs)
+            model_output = ddp_model(xt, t, **model_kwargs)
 
         # Handle multi-output models: REG (full, cls), IG (full, base), or REG+IG (full, base, cls)
         base_output = None
@@ -92,10 +92,17 @@ class Transport:
         terms['loss_reg'] = loss_reg
 
         if percep_loss is not None:
-            assert self.prediction == "x"
-            # Mask based on t < percep_loss_t_thresh
             mask = t < self.percep_loss_t_thresh
-            terms['loss_percep'] = percep_loss(model_output, x1) * mask  # [B]
+            if self.prediction == "x":
+                model_output_x = model_output
+            elif self.prediction == "velocity":
+                model_output_x = self.convert_model_pred_v2x(model_output, x1, t)
+            else:
+                assert(0)
+            model_output_x = model.denormalize_latents(model_output_x)
+            decode_x = rae.decode(model_output_x) * 2.0 - 1.0
+            images = rae._preprocess(images)
+            terms['loss_percep'] = percep_loss(decode_x, images) * mask  # [B]
 
         return terms
 
@@ -109,6 +116,11 @@ class Transport:
         elif self.prediction == "x":
             t_safe = _expand_t(t, xt).clamp_min(self.t_eps)
             return (xt - output) / t_safe
+
+    def convert_model_pred_v2x(self, output, xt, t):
+        # output is v-pred
+        t = _expand_t(t, xt)
+        return xt - t * output
 
     def compute_loss(self, output, vt, xt, t):
         output = self.convert_model_pred(output, xt, t)
