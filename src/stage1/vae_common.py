@@ -51,7 +51,8 @@ class VAECommon(nn.Module):
 
     def forward(self, x, return_latent=False, return_posterior=False, enable_grad=False):
         with torch.set_grad_enabled(enable_grad):
-            posterior, z, xhat = self.vae(x)
+            z, vae_log = self.vae(x)
+            posterior, xhat = vae_log["posterior"], vae_log["xhat"]
         if return_latent and return_posterior:
             return xhat, z, posterior
         elif return_latent:
@@ -69,5 +70,5 @@ class VAECommon(nn.Module):
     def decode(self, z, enable_grad=False):
         with torch.set_grad_enabled(enable_grad):
             xhat = self.vae.decode(z)
-            xhat = ((xhat + 1.0) / 2.0).clamp(0, 1)
+            xhat = ((xhat + 1.0) / 2.0)
             return xhat

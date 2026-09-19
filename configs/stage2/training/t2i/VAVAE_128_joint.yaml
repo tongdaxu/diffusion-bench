@@ -111,3 +111,20 @@ misc:
   num_classes: 1000
   time_dist_shift_dim: 32768
   time_dist_shift_base: 4096
+
+perceptual_loss:
+  encoders: 'lpips,dinov2-vit-b'
+  percep_loss_weights: [0.5, 0.05]
+
+repa:
+  use_repa: true
+  use_reg: false
+  reg_coeff: 0.0
+  reg_coeff_vae: 0.0
+  repa_layer_depth: 8
+  repa_coeff: 0.5
+  repa_coeff_vae: 1.5
+  target_encoder: dinov2-vit-b
+  target_encoder_resolution: 256
+
+loss_cfg_path: "configs/stage2/training/t2i/l1_lpips_kl.yaml"

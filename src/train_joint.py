@@ -161,19 +161,8 @@ def main():
         PerceptualLoss(config.perceptual_loss.encoders, config.perceptual_loss.percep_loss_weights, device=device)
         if config.perceptual_loss.encoders else None
     )
-    loss_cfg = {
-        "discriminator_start": 0,
-        "discriminator_factor": 0.0,
-        "discriminator_weight": 0.0,
-        "quantizer_weight": 1.0,
-        "perceptual_loss": "lpips",
-        "perceptual_weight": 0.5,
-        "reconstruction_loss": "l1",
-        "reconstruction_weight": 1.0,
-        "lecam_regularization_weight": 0.0,
-        "kl_weight": 2e-7,
-        "logvar_init": 0.0,
-    }
+    loss_cfg = OmegaConf.load(config.loss_cfg_path)
+
     vae_loss_fn = ReconstructionLoss_Simple(
         loss_cfg
     ).to(device)

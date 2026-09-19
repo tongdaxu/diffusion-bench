@@ -109,8 +109,10 @@ class RepaConfig:
     use_repa: bool = False
     use_reg: bool = False
     reg_coeff: float = 0.03
+    reg_coeff_vae: float = 0.03
     repa_layer_depth: int = 8
     repa_coeff: float = 0.5
+    repa_coeff_vae: float = 0.5
     target_encoder: str = "dinov2-vit-b"
     target_encoder_resolution: int = 256
     z_dim: Optional[int] = None  # initialized later in train.py
@@ -163,6 +165,7 @@ class Stage2Config:
     internal_guidance: InternalGuidanceConfig = field(default_factory=InternalGuidanceConfig)
     perceptual_loss: PerceptualLossConfig = field(default_factory=PerceptualLossConfig)
     eval: Optional[EvalConfig] = None
+    loss_cfg_path: Optional[str] = None
 
     def post_process(self):
         """Post-process the config to set certain runtime fields."""

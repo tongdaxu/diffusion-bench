@@ -25,7 +25,8 @@ from utils.checkpoint import save_stage2_checkpoint
 from utils.guidance_utils import get_model_forward_fn
 from utils.logging import save_eval_to_csv
 from utils.sync_utils import sync_checkpoint_async, sync_evals_async
-from utils.train_utils import update_ema
+from utils.train_utils import requires_grad, update_ema
+from ifid.fid.psnr import get_psnr
 
 logger = logging.getLogger("rae")
 
@@ -378,7 +379,9 @@ def train_one_epoch_joint(
     if config.training.checkpoint_interval > 0 and epoch % config.training.checkpoint_interval == 0 and rank == 0:
         logger.info(f"Saving checkpoint at epoch {epoch}...")
         ckpt_path = f"{checkpoint_dir}/ep-{epoch:07d}.pt"
+        ckpt_path_rae = f"{checkpoint_dir}/ep-{epoch:07d}-rae.pt"
         save_stage2_checkpoint(ckpt_path, global_step, epoch, ddp_model, ema_model, optimizer, scheduler)
+        save_stage2_checkpoint(ckpt_path_rae, global_step, epoch, ddp_rae, ddp_rae, optimizer_rae, scheduler_rae)
         if args.sync_checkpoints:
             sync_checkpoint_async(checkpoint_dir, logger)
             if do_eval: sync_evals_async(eval_dir, logger)
@@ -389,23 +392,6 @@ def train_one_epoch_joint(
     dataloader.set_epoch(epoch)
     for step, (images, y) in enumerate(dataloader):
         images = images.to(device)
-
-        # Encode images to latents and compute REPA targets
-        with torch.no_grad():
-            z = rae.encode(images)
-            z = model.normalize_latents(z)
-            z_clean = cls_clean = None
-            if repa_target_encoder is not None:
-                raw_images = images.clone() * 255.0
-                raw_img_preprocessed = repa_target_encoder.preprocess(raw_images)
-                feats = repa_target_encoder.forward_features(raw_img_preprocessed)
-                z_clean = feats['x_norm_patchtokens']
-                if config.repa.use_reg:
-                    cls_clean = feats['x_norm_clstoken']
-                    if config.repa.use_repa:
-                        z_clean = torch.cat([cls_clean.unsqueeze(1), z_clean], dim=1)
-
-        # print(model.bn.running_var.rsqrt(), model.bn.running_mean)
 
         # Capture fixed conditions from first batch
         if viz_fixed is not None:
@@ -422,11 +408,82 @@ def train_one_epoch_joint(
         #########################################################
         model_kwargs = dict(context=context, attn_mask=context_attn_mask)
 
+        # compute vae loss first ...
+
+        requires_grad(ddp_rae, True)
+        requires_grad(ddp_model, False)
+
         with autocast(**autocast_kwargs):
-            loss_dict = transport.training_losses(
+
+            xhat, z, posterior = ddp_rae(images, return_latent=True, return_posterior=True, enable_grad=True)
+            z = model.normalize_latents(z)
+            xhat_norm = xhat * 2.0 - 1.0
+            x_norm = rae._preprocess(images)
+            loss_vae, loss_vae_dict = vae_loss_fn(x_norm, xhat_norm, posterior, global_step, "generator")
+            loss_vae = torch.mean(loss_vae)
+
+            psnr = torch.mean(get_psnr(x_norm, xhat_norm, zero_mean=True, integer=True)).detach()
+
+            xhat_norm = xhat * 2.0 - 1.0
+            # Encode images to latents and compute REPA targets
+            with torch.no_grad():
+                z_clean = cls_clean = None
+                if repa_target_encoder is not None:
+                    raw_images = images.clone() * 255.0
+                    raw_img_preprocessed = repa_target_encoder.preprocess(raw_images)
+                    feats = repa_target_encoder.forward_features(raw_img_preprocessed)
+                    z_clean = feats['x_norm_patchtokens']
+                    if config.repa.use_reg:
+                        cls_clean = feats['x_norm_clstoken']
+                        if config.repa.use_repa:
+                            z_clean = torch.cat([cls_clean.unsqueeze(1), z_clean], dim=1)
+
+            vae_loss_dict = transport.training_losses(
                 ddp_model, z, model_kwargs, model_kwargs_null,
                 percep_loss=percep_loss,
+                model=model,
+                rae=rae,
                 z_clean=z_clean,
+                images=images,
+                repa_coeff=config.repa.repa_coeff if config.repa.use_repa else None,
+                base_model_coeff=config.internal_guidance.base_model_coeff,
+                cfg_dropout_prob=config.conditioning.cfg_dropout_prob,
+                ema_model=ema_model,
+                cls_clean=cls_clean,
+                reg_coeff=config.repa.reg_coeff if config.repa.use_reg else None,
+            )
+            loss_percep = vae_loss_dict.get("loss_percep", torch.tensor(0.0, device=device)).mean()
+            loss_vae = loss_vae + loss_percep
+
+            loss_repa = vae_loss_dict.get("loss_repa", torch.tensor(0.0, device=device)).mean()
+            loss_reg = vae_loss_dict.get("loss_reg", torch.tensor(0.0, device=device)).mean()
+            if config.repa.use_repa:
+                loss_vae = loss_vae + loss_repa
+            if config.repa.use_reg:
+                loss_vae = loss_vae + loss_reg
+
+        loss_vae = loss_vae / config.training.grad_accum_steps
+
+        is_accum_step = (step + 1) % config.training.grad_accum_steps != 0
+        if is_accum_step:
+            with ddp_rae.no_sync():
+                loss_vae.backward()
+        else:
+            loss_vae.backward()  # DDP auto-syncs gradients on final micro-step
+
+        requires_grad(ddp_rae, False)
+        requires_grad(ddp_model, True)
+
+        # diffusion step later
+        with autocast(**autocast_kwargs):
+
+            loss_dict = transport.training_losses(
+                ddp_model, z.detach(), model_kwargs, model_kwargs_null,
+                percep_loss=percep_loss,
+                model=model,
+                rae=rae,
+                z_clean=z_clean,
+                images=images,
                 repa_coeff=config.repa.repa_coeff if config.repa.use_repa else None,
                 base_model_coeff=config.internal_guidance.base_model_coeff,
                 cfg_dropout_prob=config.conditioning.cfg_dropout_prob,
@@ -456,13 +513,21 @@ def train_one_epoch_joint(
 
         # Step optimizer and scheduler at grad accumulation boundary
         if not is_accum_step:
-            transport.post_backward(ddp_model)
+
+            if config.training.clip_grad:
+                torch.nn.utils.clip_grad_norm_(ddp_rae.parameters(), config.training.clip_grad)
+            optimizer_rae.step()
+            optimizer_rae.zero_grad(set_to_none=True)
+            if scheduler_rae is not None:
+                scheduler_rae.step()
+
             if config.training.clip_grad:
                 torch.nn.utils.clip_grad_norm_(ddp_model.parameters(), config.training.clip_grad)
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
             if scheduler is not None:
                 scheduler.step()
+                
             update_ema(ema_model, ddp_model.module, decay=config.training.ema_decay)
             global_step += 1
             progress_bar.update(1)
@@ -479,7 +544,12 @@ def train_one_epoch_joint(
         #########################################################
         if config.training.log_interval > 0 and global_step % config.training.log_interval == 0 and rank == 0:
             cur_loss = loss_diff.item()
-            stats = {"train/loss": cur_loss, "train/lr": optimizer.param_groups[0]["lr"]}
+            stats = {"train/loss": cur_loss, "train/lr": optimizer.param_groups[0]["lr"], "train/loss_vae_psnr": psnr.item(),
+                     "train/loss_vae": torch.mean(loss_vae).item(),
+                     "train/loss_vae_lpips": torch.mean(loss_vae_dict["perceptual_loss"]).item(),
+                     "train/loss_vae_recon": torch.mean(loss_vae_dict["reconstruction_loss"]).item(),
+                     "train/loss_vae_kl": torch.mean(loss_vae_dict["kl_loss"]).item(),
+                     }
             if config.repa.use_repa:
                 stats["train/loss_repa"] = loss_repa.item()
             if config.repa.use_reg:
