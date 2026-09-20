@@ -83,6 +83,25 @@ def save_stage2_checkpoint(
     os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save(state, path)
 
+def save_rae_checkpoint(
+    path: str,
+    step: int,
+    epoch: int,
+    model,
+    optimizer: torch.optim.Optimizer,
+    scheduler: Optional[LambdaLR],
+) -> None:
+    """Save Stage 2 training checkpoint."""
+    state = {
+        "step": step,
+        "epoch": epoch,
+        "state_dict": model.vae.vae.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict() if scheduler is not None else None,
+    }
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    torch.save(state, path)
+
 
 def load_stage2_checkpoint(
     path: str,

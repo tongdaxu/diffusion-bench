@@ -21,7 +21,7 @@ from stage2.utils import (
     sample_and_decode,
 )
 from utils import wandb_utils
-from utils.checkpoint import save_stage2_checkpoint
+from utils.checkpoint import save_stage2_checkpoint, save_rae_checkpoint
 from utils.guidance_utils import get_model_forward_fn
 from utils.logging import save_eval_to_csv
 from utils.sync_utils import sync_checkpoint_async, sync_evals_async
@@ -379,9 +379,9 @@ def train_one_epoch_joint(
     if config.training.checkpoint_interval > 0 and epoch % config.training.checkpoint_interval == 0 and rank == 0:
         logger.info(f"Saving checkpoint at epoch {epoch}...")
         ckpt_path = f"{checkpoint_dir}/ep-{epoch:07d}.pt"
-        ckpt_path_rae = f"{checkpoint_dir}/ep-{epoch:07d}-rae.pt"
+        ckpt_path_rae = f"{checkpoint_dir}/ep-{epoch:07d}.pt.rae"
         save_stage2_checkpoint(ckpt_path, global_step, epoch, ddp_model, ema_model, optimizer, scheduler)
-        save_stage2_checkpoint(ckpt_path_rae, global_step, epoch, ddp_rae, ddp_rae, optimizer_rae, scheduler_rae)
+        save_rae_checkpoint(ckpt_path_rae, global_step, epoch, rae, optimizer_rae, scheduler_rae)
         if args.sync_checkpoints:
             sync_checkpoint_async(checkpoint_dir, logger)
             if do_eval: sync_evals_async(eval_dir, logger)
