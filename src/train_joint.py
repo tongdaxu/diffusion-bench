@@ -90,7 +90,7 @@ def main():
         world_size=world_size,
         transform=stage2_transform if needs_transform else None,
         condition_type=config.conditioning.type,
-        virtual_epoch_steps=config.training.virtual_epoch_steps,
+        virtual_epoch_steps=config.training.virtual_epoch_steps * config.training.grad_accum_steps,
     )
 
     # eval setup
@@ -157,15 +157,16 @@ def main():
             "trainable_params_M": round(sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6, 1),
         }, allow_val_change=True)
 
-    percep_loss = (
-        PerceptualLoss(config.perceptual_loss.encoders, config.perceptual_loss.percep_loss_weights, device=device)
-        if config.perceptual_loss.encoders else None
-    )
-    loss_cfg = OmegaConf.load(config.loss_cfg_path)
+    with main_process_first(rank):
+        percep_loss = (
+            PerceptualLoss(config.perceptual_loss.encoders, config.perceptual_loss.percep_loss_weights, device=device)
+            if config.perceptual_loss.encoders else None
+        )
+        loss_cfg = OmegaConf.load(config.loss_cfg_path)
 
-    vae_loss_fn = ReconstructionLoss_Simple(
-        loss_cfg
-    ).to(device)
+        vae_loss_fn = ReconstructionLoss_Simple(
+            loss_cfg
+        ).to(device)
 
     #########################################################
     # Optimizer + Scheduler setup
