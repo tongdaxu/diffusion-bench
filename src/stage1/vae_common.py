@@ -50,6 +50,7 @@ class VAECommon(nn.Module):
         return x
 
     def forward(self, x, return_latent=False, return_posterior=False, enable_grad=False):
+        x = self._preprocess(x)
         with torch.set_grad_enabled(enable_grad):
             z, vae_log = self.vae(x)
             posterior, xhat = vae_log["posterior"], vae_log["xhat"]
