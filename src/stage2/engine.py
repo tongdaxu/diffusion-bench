@@ -490,6 +490,8 @@ def train_one_epoch_joint(
                 ema_model=ema_model,
                 cls_clean=cls_clean,
                 reg_coeff=config.repa.reg_coeff if config.repa.use_reg else None,
+                x0=vae_loss_dict['x0'], 
+                t=vae_loss_dict['t'],
             )
             loss_diff = loss_dict["loss"].mean()
             loss_percep = loss_dict.get("loss_percep", torch.tensor(0.0, device=device)).mean()

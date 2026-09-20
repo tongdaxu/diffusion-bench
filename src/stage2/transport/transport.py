@@ -33,19 +33,21 @@ class Transport:
         self.percep_loss_t_thresh = percep_loss_t_thresh
         self.time_sampler = get_time_sampler(time_dist_type)
 
-    def sample(self, x1):
-        x0 = th.randn_like(x1)
-        t = self.time_sampler(x1.shape[0]).to(x1)
-        t = self.time_dist_shift * t / (1 + (self.time_dist_shift - 1) * t)
+    def sample(self, x1, x0=None, t=None):
+        if x0 is None:
+            x0 = th.randn_like(x1)
+        if t is None:
+            t = self.time_sampler(x1.shape[0]).to(x1)
+            t = self.time_dist_shift * t / (1 + (self.time_dist_shift - 1) * t)
         return t, x0, x1
 
     #######################################################
     #               Forward Pass and Loss                 #
     #######################################################
-    def training_losses(self, ddp_model, x1, model_kwargs={}, model_kwargs_null={}, z_clean=None, repa_coeff=None, base_model_coeff=1.0, percep_loss=None, rae=None, model=None, images=None,cfg_dropout_prob=0.1, ema_model=None, cls_clean=None, reg_coeff=None, vae=None):
+    def training_losses(self, ddp_model, x1, model_kwargs={}, model_kwargs_null={}, z_clean=None, repa_coeff=None, base_model_coeff=1.0, percep_loss=None, rae=None, model=None, images=None,cfg_dropout_prob=0.1, ema_model=None, cls_clean=None, reg_coeff=None, x0=None, t=None):
         model_kwargs, _ = apply_cfg_dropout(model_kwargs, model_kwargs_null, cfg_dropout_prob)
 
-        t, x0, x1 = self.sample(x1)
+        t, x0, x1 = self.sample(x1, x0=x0, t=t)
         xt = (1 - _expand_t(t, x1)) * x1 + _expand_t(t, x1) * x0
         vt = (xt - x1) / _expand_t(t, xt).clamp_min(self.t_eps)
 
@@ -104,6 +106,8 @@ class Transport:
             images = rae._preprocess(images)
             terms['loss_percep'] = percep_loss(decode_x, images) * mask  # [B]
 
+        terms['x0'] = x0
+        terms['t'] = t
         return terms
 
     def post_backward(self, model):
