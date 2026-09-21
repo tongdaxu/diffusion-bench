@@ -46,7 +46,7 @@ class VAECommon(nn.Module):
             )
 
         # Convert from [0, 1] to [-1, 1]
-        x = x * 2.0 - 1.0
+        x = x * 2.0 - 1.0 
         return x
 
     def forward(self, x, return_latent=False, return_posterior=False, enable_grad=False):
@@ -54,6 +54,7 @@ class VAECommon(nn.Module):
         with torch.set_grad_enabled(enable_grad):
             z, vae_log = self.vae(x)
             posterior, xhat = vae_log["posterior"], vae_log["xhat"]
+        xhat = ((xhat + 1.0) / 2.0)
         if return_latent and return_posterior:
             return xhat, z, posterior
         elif return_latent:
