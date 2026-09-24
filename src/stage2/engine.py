@@ -421,10 +421,7 @@ def train_one_epoch_joint(
             x_norm = rae._preprocess(images)
             loss_vae, loss_vae_dict = vae_loss_fn(x_norm, xhat_norm, posterior, global_step, "generator")
             loss_vae = torch.mean(loss_vae)
-
             psnr = torch.mean(get_psnr(x_norm, xhat_norm, zero_mean=True, integer=True)).detach()
-
-            xhat_norm = xhat * 2.0 - 1.0
             # Encode images to latents and compute REPA targets
             with torch.no_grad():
                 z_clean = cls_clean = None
