@@ -107,12 +107,15 @@ class GuidanceConfig:
 class RepaConfig:
     """REPA loss configuration with multi-layer support."""
     use_repa: bool = False
+    use_repa2: bool = False
     use_reg: bool = False
     reg_coeff: float = 0.03
     reg_coeff_vae: float = 0.03
     repa_layer_depth: int = 8
     repa_coeff: float = 0.5
-    repa_coeff_vae: float = 0.5
+    repa2_coeff: float = 0.5
+    repa_coeff_vae: float = 1.5
+    repa2_coeff_vae: float = 1.5
     target_encoder: str = "dinov2-vit-b"
     target_encoder_resolution: int = 256
     z_dim: Optional[int] = None  # initialized later in train.py

@@ -7,7 +7,7 @@ dependencies = [
   "accelerate==1.12.0",
   "datasets==4.4.2",
   "dictdot==1.5.1",
-  "diffusers==0.36.0",
+  "diffusers==0.41.0",
   "einops==0.8.1",
   "numpy==2.2.6",
   "omegaconf==2.3.0",
@@ -34,6 +34,12 @@ dependencies = [
   "dpg-evaluator",
   "geneval-evaluator",
   "t2v-metrics",
+  "ifid",
+  "opencv-python-headless>=5.0.0.93",
+  "h5py>=3.16.0",
+  "lpips>=0.1.4",
+  "innlab",
+  "torch-dct>=0.1.6",
 ]
 
 [dependency-groups]
@@ -50,6 +56,9 @@ dev = [
 environments = [
     "sys_platform == 'linux'",
 ]
+override-dependencies = [
+  "safetensors==0.7.0",
+]
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128" }]
@@ -57,6 +66,9 @@ gram-newton-schulz = { git = "https://github.com/nanovisionx/gmuon.git", branch 
 dpg-evaluator = { git = "https://github.com/End2End-Diffusion/diffusionbench-evals.git", subdirectory = "dpgbench", branch = "main" }
 geneval-evaluator = { git = "https://github.com/End2End-Diffusion/diffusionbench-evals.git", subdirectory = "geneval", branch = "main" }
 t2v-metrics = { git = "https://github.com/End2End-Diffusion/diffusionbench-evals.git", subdirectory = "t2v_metrics", branch = "main" }
+innlab = { git = "https://github.com/ELIFE-ASU/INNLab" }
+torch-fidelity = { git = "https://github.com/toshas/torch-fidelity.git" }
+ifid = { git = "https://github.com/tongdaxu/Making-rFID-Predictive-of-Diffusion-gFID.git", rev = "xu" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

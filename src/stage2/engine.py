@@ -442,7 +442,8 @@ def train_one_epoch_joint(
                 rae=rae,
                 z_clean=z_clean,
                 images=images,
-                repa_coeff=config.repa.repa_coeff if config.repa.use_repa else None,
+                repa_coeff=config.repa.repa_coeff_vae if config.repa.use_repa else None,
+                repa2_coeff=config.repa.repa2_coeff_vae if config.repa.use_repa2 else None,
                 base_model_coeff=config.internal_guidance.base_model_coeff,
                 cfg_dropout_prob=config.conditioning.cfg_dropout_prob,
                 ema_model=ema_model,
@@ -453,9 +454,12 @@ def train_one_epoch_joint(
             loss_vae = loss_vae + loss_percep
 
             loss_repa = vae_loss_dict.get("loss_repa", torch.tensor(0.0, device=device)).mean()
+            loss_repa2 = vae_loss_dict.get("loss_repa2", torch.tensor(0.0, device=device)).mean()
             loss_reg = vae_loss_dict.get("loss_reg", torch.tensor(0.0, device=device)).mean()
             if config.repa.use_repa:
                 loss_vae = loss_vae + loss_repa
+            if config.repa.use_repa2:
+                loss_vae = loss_vae + loss_repa2
             if config.repa.use_reg:
                 loss_vae = loss_vae + loss_reg
 
@@ -482,6 +486,7 @@ def train_one_epoch_joint(
                 z_clean=z_clean,
                 images=images,
                 repa_coeff=config.repa.repa_coeff if config.repa.use_repa else None,
+                repa2_coeff=config.repa.repa2_coeff if config.repa.use_repa2 else None,
                 base_model_coeff=config.internal_guidance.base_model_coeff,
                 cfg_dropout_prob=config.conditioning.cfg_dropout_prob,
                 ema_model=ema_model,
@@ -495,9 +500,12 @@ def train_one_epoch_joint(
             loss = loss_diff + loss_percep
 
             loss_repa = loss_dict.get("loss_repa", torch.tensor(0.0, device=device)).mean()
+            loss_repa2 = loss_dict.get("loss_repa2", torch.tensor(0.0, device=device)).mean()
             loss_reg = loss_dict.get("loss_reg", torch.tensor(0.0, device=device)).mean()
             if config.repa.use_repa:
                 loss = loss + loss_repa
+            if config.repa.use_repa2:
+                loss = loss + loss_repa2
             if config.repa.use_reg:
                 loss = loss + loss_reg
 
@@ -551,6 +559,8 @@ def train_one_epoch_joint(
                      }
             if config.repa.use_repa:
                 stats["train/loss_repa"] = loss_repa.item()
+            if config.repa.use_repa:
+                stats["train/loss_repa2"] = loss_repa2.item()
             if config.repa.use_reg:
                 stats["train/loss_reg"] = loss_reg.item()
             if "loss_base" in loss_dict:

@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 from stage2.utils import apply_cfg_dropout
 from utils.dist_utils import synchronize_gradients
-
+from ifid.sit.sit import mean_flat
 
 def _expand_t(t, x):
     return t.view(t.size(0), *([1] * (len(x.size()) - 1)))
@@ -41,10 +41,11 @@ class Transport:
             t = self.time_dist_shift * t / (1 + (self.time_dist_shift - 1) * t)
         return t, x0, x1
 
+
     #######################################################
     #               Forward Pass and Loss                 #
     #######################################################
-    def training_losses(self, ddp_model, x1, model_kwargs={}, model_kwargs_null={}, z_clean=None, repa_coeff=None, base_model_coeff=1.0, percep_loss=None, rae=None, model=None, images=None,cfg_dropout_prob=0.1, ema_model=None, cls_clean=None, reg_coeff=None, x0=None, t=None):
+    def training_losses(self, ddp_model, x1, model_kwargs={}, model_kwargs_null={}, z_clean=None, repa_coeff=None, repa2_coeff=None, base_model_coeff=1.0, percep_loss=None, rae=None, model=None, images=None,cfg_dropout_prob=0.1, ema_model=None, cls_clean=None, reg_coeff=None, x0=None, t=None):
         model_kwargs, _ = apply_cfg_dropout(model_kwargs, model_kwargs_null, cfg_dropout_prob)
 
         t, x0, x1 = self.sample(x1, x0=x0, t=t)
@@ -86,7 +87,10 @@ class Transport:
             terms['loss_base'] = loss_base
         loss_repa = th.tensor(0.0, device=x1.device)
         if enable_repa and zt_pred is not None:
-            loss_repa = repa_coeff * F.mse_loss(zt_pred, z_clean)
+            # loss_repa = repa_coeff * F.mse_loss(zt_pred, z_clean)
+            zt_pred, z_clean = F.normalize(zt_pred, dim=-1), F.normalize(z_clean, dim=-1)
+            loss_repa = th.mean(mean_flat(-(zt_pred * z_clean).sum(dim=-1)))
+
         terms['loss_repa'] = loss_repa
         loss_reg = th.tensor(0.0, device=x1.device)
         if enable_reg and cls_pred is not None:
@@ -102,9 +106,34 @@ class Transport:
             else:
                 assert(0)
             model_output_x = model.denormalize_latents(model_output_x)
-            decode_x = rae.decode(model_output_x) * 2.0 - 1.0
+            decode_x = rae.decode(model_output_x, enable_grad=True) * 2.0 - 1.0
             images = rae._preprocess(images)
             terms['loss_percep'] = percep_loss(decode_x, images) * mask  # [B]
+        
+        if repa2_coeff is not None:
+            # compute repa2 loss
+            if self.prediction == "x":
+                model_output_x = model_output
+            elif self.prediction == "velocity":
+                model_output_x = self.convert_model_pred_v2x(model_output, x1, t)
+            else:
+                assert(0)
+            that = t * 0.25
+            xt_ref = (1 - _expand_t(that, x1)) * x1 + _expand_t(that, x1) * th.randn_like(x1)
+            xt_dis = (1 - _expand_t(that, x1)) * model_output_x + _expand_t(that, x1) * th.randn_like(x1)
+            xt_in = th.cat([xt_ref, xt_dis], dim=0)
+            t_in = th.cat([that, that], dim=0)
+            model_kwargs_in = {
+                "context": th.cat([model_kwargs["context"], model_kwargs["context"]], dim=0),
+                "attn_mask": th.cat([model_kwargs["attn_mask"], model_kwargs["attn_mask"]], dim=0),
+            }
+            feat_out = ema_model(xt_in, t_in, return_intermediate=True, return_intermediate_only=True, **model_kwargs_in)
+            feat_ref, feat_dis = th.chunk(feat_out, 2, dim=0)
+            feat_ref, feat_dis = F.normalize(feat_ref, dim=-1), F.normalize(feat_dis, dim=-1)
+            proj_loss = th.mean(mean_flat(-(feat_ref * feat_dis).sum(dim=-1)))
+            terms['loss_repa2'] = proj_loss * repa2_coeff
+        else:
+            terms['loss_repa2'] = th.tensor(0.0, device=x1.device)
 
         terms['x0'] = x0
         terms['t'] = t

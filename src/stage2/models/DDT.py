@@ -217,7 +217,7 @@ class DiTwDDTHead(nn.Module):
         attn_mask = (1.0 - attn_mask[:, None, None, :]) * torch.finfo(seq.dtype).min
         return attn_mask
 
-    def forward(self, x, t, return_intermediate=False, **condition_kwargs):
+    def forward(self, x, t, return_intermediate=False, return_intermediate_only=False, **condition_kwargs):
         zt_intermediate = None
         seq, t_emb_base = self._build_sequence(x, t, condition_kwargs)
         attn_mask = self._build_attn_mask(seq, condition_kwargs)
@@ -226,6 +226,8 @@ class DiTwDDTHead(nn.Module):
             seq = self.blocks[i](seq, self.enc_rope, attn_mask)
             if return_intermediate and (i + 1) == self.repa_layer_depth:
                 zt_intermediate = self.repa_projector(seq[:, :s + n, :])
+                if return_intermediate_only:
+                    return zt_intermediate
         seq = self.s_projector(F.silu(t_emb_base + seq[:, :s + n, :]))
 
         x = self.x_embedder(x)
